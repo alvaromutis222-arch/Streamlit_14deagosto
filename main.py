@@ -31,9 +31,8 @@ RAW_PATTERNS = [
         r"https?://github\.com/([^/]+)/([^/]+)/blob/([^/]+)/(.+)",
         r"https://raw.githubusercontent.com/\1/\2/\3/\4",
     ),
-    # https://gitlab.com/user/repo/-/raw/branch/path/file.csv -> dejar igual
+    # otros hostings pueden añadirse aquí si hiciera falta
 ]
-
 
 def github_to_raw(url: str) -> str:
     """Convierte URL estándar de GitHub a raw si aplica; si ya es raw, la devuelve igual."""
@@ -46,11 +45,9 @@ def github_to_raw(url: str) -> str:
             return re.sub(pat, repl, url)
     return url
 
-
 @st.cache_data(show_spinner=False)
 def load_data_from_text(content: str, sep: str, header: bool) -> pd.DataFrame:
     return pd.read_csv(io.StringIO(content), sep=sep, header=0 if header else None)
-
 
 @st.cache_data(show_spinner=True)
 def load_data_from_url(url: str, sep: str, header: bool) -> pd.DataFrame:
@@ -58,14 +55,11 @@ def load_data_from_url(url: str, sep: str, header: bool) -> pd.DataFrame:
     df = pd.read_csv(raw_url, sep=sep, header=0 if header else None)
     return df
 
-
 def numeric_columns(df: pd.DataFrame):
     return df.select_dtypes(include=[np.number]).columns.tolist()
 
-
 def categorical_columns(df: pd.DataFrame):
     return df.select_dtypes(exclude=[np.number]).columns.tolist()
-
 
 # -----------------------------------------
 # Sidebar: Entrada de datos
@@ -77,7 +71,11 @@ source = st.sidebar.radio(
     index=0,
 )
 
-sep = st.sidebar.selectbox("Separador", options=[",", ";", "\t"], format_func=lambda x: {',': 'Coma (,)', ';': 'Punto y coma (;)', '\t': 'Tabulador (TAB)'}[x])
+sep = st.sidebar.selectbox(
+    "Separador",
+    options=[",", ";", "\t"],
+    format_func=lambda x: {',': 'Coma (,)', ';': 'Punto y coma (;)', '\t': 'Tabulador (TAB)'}[x]
+)
 use_header = st.sidebar.checkbox("Primera fila es encabezado", value=True)
 
 uploaded_df = None
@@ -130,7 +128,7 @@ if uploaded_df is not None:
     n_head = st.slider("Número de filas a mostrar", 5, 50, 10)
     st.dataframe(df.head(n_head), use_container_width=True)
 
-    with st.expander("Tipos de datos"):        
+    with st.expander("Tipos de datos"):
         dtypes = pd.DataFrame({"columna": df.columns, "dtype": df.dtypes.astype(str)})
         st.dataframe(dtypes, use_container_width=True)
 
@@ -238,36 +236,42 @@ if uploaded_df is not None:
         else:
             st.info("No hay columnas numéricas para el histograma.")
 
-    # Dispersión
+    # Dispersión (FIX: opción "(sin color)" y sólo agregar canal color cuando procede)
     with tab3:
         if len(cnum) >= 2:
             x = st.selectbox("Eje X", options=cnum, key="scat_x")
             y = st.selectbox("Eje Y", options=cnum, key="scat_y")
-            color = st.selectbox("Color (opcional)", options=[None] + ccat, index=0, key="scat_color")
-            chart = (
+            color_opt = st.selectbox("Color (opcional)", options=["(sin color)"] + ccat, index=0, key="scat_color")
+
+            base = (
                 alt.Chart(df)
-                .mark_circle(opacity=0.7)
+                .mark_circle(opacity=0.7, color="steelblue" if color_opt == "(sin color)" else None)
                 .encode(
                     x=alt.X(f"{x}:Q", title=x),
                     y=alt.Y(f"{y}:Q", title=y),
-                    color=(alt.Color(f"{color}:N", title=color) if color else alt.value("steelblue")),
-                    tooltip=[x, y] + ([color] if color else []),
+                    tooltip=[x, y],
                 )
                 .interactive()
                 .properties(height=450)
             )
+
+            if color_opt != "(sin color)":
+                chart = base.encode(color=alt.Color(f"{color_opt}:N", title=color_opt))
+            else:
+                chart = base
+
             st.altair_chart(chart, use_container_width=True)
         else:
             st.info("Se requieren al menos dos columnas numéricas para la dispersión.")
 
-    # Boxplot
+    # Boxplot (FIX: quitar outliers=True)
     with tab4:
         if cnum and ccat:
             n = st.selectbox("Numérica", options=cnum, key="box_num")
             c = st.selectbox("Categoría", options=ccat, key="box_cat")
             box = (
                 alt.Chart(df)
-                .mark_boxplot(outliers=True)
+                .mark_boxplot()
                 .encode(
                     x=alt.X(f"{c}:N", title=c),
                     y=alt.Y(f"{n}:Q", title=n),
@@ -282,6 +286,7 @@ if uploaded_df is not None:
     # Correlación
     with tab5:
         if len(cnum) >= 2:
+            # Si tu versión de pandas no admite numeric_only en .corr, cambia a: corr = df[cnum].corr().round(3)
             corr = df[cnum].corr(numeric_only=True).round(3)
             corr_melt = (
                 corr.reset_index()
